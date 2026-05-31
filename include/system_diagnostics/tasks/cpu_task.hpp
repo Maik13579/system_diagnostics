@@ -23,7 +23,6 @@ public:
     const rclcpp_lifecycle::LifecycleNode::SharedPtr & node,
     const std::string & parameter_namespace) override;
   void cleanup() override;
-  std::string name() const override;
   void update(diagnostic_updater::DiagnosticStatusWrapper & status) override;
 
 private:
@@ -40,7 +39,6 @@ private:
     double & load_5min,
     double & load_15min);
 
-  std::string parameter_namespace_;
   double warn_usage_ = 80.0;
   double error_usage_ = 95.0;
   double warn_load_per_core_ = 1.0;

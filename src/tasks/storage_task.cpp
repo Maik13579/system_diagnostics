@@ -12,23 +12,13 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
 namespace
 {
-
-template<typename ValueT>
-ValueT declare_or_get(
-  const rclcpp_lifecycle::LifecycleNode::SharedPtr & node,
-  const std::string & name,
-  const ValueT & default_value)
-{
-  if (!node->has_parameter(name)) {
-    node->declare_parameter<ValueT>(name, default_value);
-  }
-  return node->get_parameter(name).get_value<ValueT>();
-}
 
 std::string join_path(const std::string & path, const std::string & name)
 {
@@ -36,6 +26,18 @@ std::string join_path(const std::string & path, const std::string & name)
     return path + name;
   }
   return path + "/" + name;
+}
+
+std::string format_usage_message(
+  const std::string & path,
+  double used_percent,
+  const std::string & threshold_name,
+  double threshold)
+{
+  std::ostringstream message;
+  message << std::fixed << std::setprecision(1) << path << " used " << used_percent
+          << "% exceeded " << threshold_name << " " << threshold << "%";
+  return message.str();
 }
 
 }  // namespace
@@ -47,7 +49,7 @@ void StorageTask::configure(
   const rclcpp_lifecycle::LifecycleNode::SharedPtr & node,
   const std::string & parameter_namespace)
 {
-  parameter_namespace_ = parameter_namespace;
+  configure_name(node, parameter_namespace, "system_diagnostics/" + parameter_namespace);
   paths_ = declare_or_get<std::vector<std::string>>(node, parameter_namespace + ".paths", {"/"});
   if (paths_.empty()) {
     paths_.push_back("/");
@@ -58,11 +60,6 @@ void StorageTask::configure(
 }
 
 void StorageTask::cleanup() {}
-
-std::string StorageTask::name() const
-{
-  return parameter_namespace_.empty() ? "storage" : parameter_namespace_;
-}
 
 void StorageTask::update(diagnostic_updater::DiagnosticStatusWrapper & status)
 {
@@ -89,19 +86,22 @@ void StorageTask::update(diagnostic_updater::DiagnosticStatusWrapper & status)
       status.add(path + ".used_percent", used_percent);
       status.add(path + ".writable", writable ? "true" : "false");
 
-      if (used_percent >= error_usage_ || (check_writable_ && !writable)) {
+      if (check_writable_ && !writable) {
         level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
-        message = used_percent >= error_usage_ ? "Storage threshold exceeded" : "Storage path not writable";
+        message = path + " is not writable";
+      } else if (used_percent >= error_usage_) {
+        level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+        message = format_usage_message(path, used_percent, "error_usage", error_usage_);
       } else if (used_percent >= warn_usage_ &&
         level < diagnostic_msgs::msg::DiagnosticStatus::WARN)
       {
         level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
-        message = "Storage threshold warning";
+        message = format_usage_message(path, used_percent, "warn_usage", warn_usage_);
       }
     } catch (const std::exception & error) {
       status.add(path + ".error", error.what());
       level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
-      message = "Storage check failed";
+      message = path + " check failed: " + error.what();
     }
   }
 

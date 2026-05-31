@@ -23,13 +23,11 @@ public:
     const rclcpp_lifecycle::LifecycleNode::SharedPtr & node,
     const std::string & parameter_namespace) override;
   void cleanup() override;
-  std::string name() const override;
   void update(diagnostic_updater::DiagnosticStatusWrapper & status) override;
 
 private:
   static std::map<std::string, std::uint64_t> read_meminfo(const std::string & proc_path);
 
-  std::string parameter_namespace_;
   double warn_usage_ = 85.0;
   double error_usage_ = 95.0;
   double warn_swap_usage_ = 20.0;

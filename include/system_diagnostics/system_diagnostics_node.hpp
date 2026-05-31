@@ -6,6 +6,7 @@
 
 #include "system_diagnostics/diagnostic_task.hpp"
 
+#include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <diagnostic_updater/diagnostic_updater.hpp>
 #include <pluginlib/class_loader.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -50,16 +51,18 @@ private:
   void declare_task_parameters_from_overrides();
   void load_tasks();
   void cleanup_tasks();
+  void publish_diagnostics();
   void start_timer();
   void stop_timer();
   bool is_enabled(const std::string & parameter_namespace) const;
   std::map<std::string, std::string> discover_plugins() const;
 
-  diagnostic_updater::Updater updater_;
   pluginlib::ClassLoader<DiagnosticTask> class_loader_;
+  rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_publisher_;
   std::vector<LoadedTask> tasks_;
   rclcpp::TimerBase::SharedPtr timer_;
   double update_rate_ = 1.0;
+  std::string hardware_id_ = "host";
   std::vector<std::string> task_names_;
 };
 

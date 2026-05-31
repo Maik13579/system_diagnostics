@@ -19,6 +19,10 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+endif()
+
 add_library(system_diagnostics_core SHARED
   src/system_diagnostics_node.cpp
 )
@@ -99,5 +103,18 @@ ament_export_dependencies(
   rclcpp_components
   rclcpp_lifecycle
 )
+
+if(BUILD_TESTING)
+  ament_add_gtest(test_diagnostic_tasks
+    test/test_diagnostic_tasks.cpp
+  )
+  target_link_libraries(test_diagnostic_tasks system_diagnostics_core system_diagnostics_tasks)
+  ament_target_dependencies(test_diagnostic_tasks
+    diagnostic_msgs
+    diagnostic_updater
+    rclcpp
+    rclcpp_lifecycle
+  )
+endif()
 
 ament_package()

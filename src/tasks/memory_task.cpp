@@ -7,22 +7,23 @@
 #include <pluginlib/class_list_macros.hpp>
 
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 #include <stdexcept>
 
 namespace
 {
 
-template<typename ValueT>
-ValueT declare_or_get(
-  const rclcpp_lifecycle::LifecycleNode::SharedPtr & node,
-  const std::string & name,
-  const ValueT & default_value)
+std::string format_threshold_message(
+  const std::string & metric,
+  double value,
+  const std::string & threshold_name,
+  double threshold)
 {
-  if (!node->has_parameter(name)) {
-    node->declare_parameter<ValueT>(name, default_value);
-  }
-  return node->get_parameter(name).get_value<ValueT>();
+  std::ostringstream message;
+  message << std::fixed << std::setprecision(1) << metric << " " << value
+          << "% exceeded " << threshold_name << " " << threshold << "%";
+  return message.str();
 }
 
 }  // namespace
@@ -34,7 +35,7 @@ void MemoryTask::configure(
   const rclcpp_lifecycle::LifecycleNode::SharedPtr & node,
   const std::string & parameter_namespace)
 {
-  parameter_namespace_ = parameter_namespace;
+  configure_name(node, parameter_namespace, "system_diagnostics/" + parameter_namespace);
   warn_usage_ = declare_or_get(node, parameter_namespace + ".warn_usage", 85.0);
   error_usage_ = declare_or_get(node, parameter_namespace + ".error_usage", 95.0);
   warn_swap_usage_ = declare_or_get(node, parameter_namespace + ".warn_swap_usage", 20.0);
@@ -43,11 +44,6 @@ void MemoryTask::configure(
 }
 
 void MemoryTask::cleanup() {}
-
-std::string MemoryTask::name() const
-{
-  return parameter_namespace_.empty() ? "memory" : parameter_namespace_;
-}
 
 void MemoryTask::update(diagnostic_updater::DiagnosticStatusWrapper & status)
 {
@@ -76,10 +72,24 @@ void MemoryTask::update(diagnostic_updater::DiagnosticStatusWrapper & status)
     status.add("swap_used_percent", swap_used_percent);
     status.add("proc_path", proc_path_);
 
-    if (memory_used_percent >= error_usage_ || swap_used_percent >= error_swap_usage_) {
-      status.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, "Memory threshold exceeded");
-    } else if (memory_used_percent >= warn_usage_ || swap_used_percent >= warn_swap_usage_) {
-      status.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN, "Memory threshold warning");
+    if (memory_used_percent >= error_usage_) {
+      status.summary(
+        diagnostic_msgs::msg::DiagnosticStatus::ERROR,
+        format_threshold_message("Memory usage", memory_used_percent, "error_usage", error_usage_));
+    } else if (swap_used_percent >= error_swap_usage_) {
+      status.summary(
+        diagnostic_msgs::msg::DiagnosticStatus::ERROR,
+        format_threshold_message(
+          "Swap usage", swap_used_percent, "error_swap_usage", error_swap_usage_));
+    } else if (memory_used_percent >= warn_usage_) {
+      status.summary(
+        diagnostic_msgs::msg::DiagnosticStatus::WARN,
+        format_threshold_message("Memory usage", memory_used_percent, "warn_usage", warn_usage_));
+    } else if (swap_used_percent >= warn_swap_usage_) {
+      status.summary(
+        diagnostic_msgs::msg::DiagnosticStatus::WARN,
+        format_threshold_message(
+          "Swap usage", swap_used_percent, "warn_swap_usage", warn_swap_usage_));
     } else {
       status.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "Memory usage OK");
     }

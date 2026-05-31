@@ -3,7 +3,7 @@
 
 #include "system_diagnostics/system_diagnostics_node.hpp"
 
-#include <lifecycle_msgs/msg/state.hpp>
+#include <diagnostic_msgs/msg/diagnostic_status.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
 
 #include <chrono>
@@ -27,9 +27,10 @@ namespace system_diagnostics
 
 SystemDiagnosticsNode::SystemDiagnosticsNode(const rclcpp::NodeOptions & options)
 : LifecycleNode("system_diagnostics", options),
-  updater_(this),
   class_loader_(kPackageName, kBaseClassName)
 {
+  diagnostics_publisher_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+    "/diagnostics", rclcpp::SystemDefaultsQoS());
   declare_node_parameters();
   declare_task_parameters_from_overrides();
 }
@@ -49,8 +50,7 @@ SystemDiagnosticsNode::CallbackReturn SystemDiagnosticsNode::on_configure(
     update_rate_ = 1.0;
   }
 
-  updater_.setHardwareID(get_parameter("hardware_id").as_string());
-  updater_.setPeriod(1.0 / update_rate_);
+  hardware_id_ = get_parameter("hardware_id").as_string();
   load_tasks();
   RCLCPP_INFO(get_logger(), "Configured %zu diagnostic task(s)", tasks_.size());
   return CallbackReturn::SUCCESS;
@@ -140,9 +140,6 @@ void SystemDiagnosticsNode::load_tasks()
       task->configure(
         std::static_pointer_cast<rclcpp_lifecycle::LifecycleNode>(shared_from_this()),
         parameter_namespace);
-      updater_.add(task->name(), [task](diagnostic_updater::DiagnosticStatusWrapper & status) {
-        task->update(status);
-      });
       tasks_.push_back(LoadedTask{parameter_namespace, plugin_name, task});
       RCLCPP_INFO(
         get_logger(), "Loaded diagnostic task '%s' from plugin '%s'",
@@ -160,7 +157,6 @@ void SystemDiagnosticsNode::cleanup_tasks()
   stop_timer();
   for (auto & loaded_task : tasks_) {
     try {
-      updater_.removeByName(loaded_task.task->name());
       loaded_task.task->cleanup();
     } catch (const std::exception & error) {
       RCLCPP_WARN(
@@ -171,17 +167,35 @@ void SystemDiagnosticsNode::cleanup_tasks()
   tasks_.clear();
 }
 
+void SystemDiagnosticsNode::publish_diagnostics()
+{
+  diagnostic_msgs::msg::DiagnosticArray array;
+  array.header.stamp = now();
+
+  for (const auto & loaded_task : tasks_) {
+    diagnostic_updater::DiagnosticStatusWrapper status;
+    status.name = loaded_task.task->name();
+    status.hardware_id = hardware_id_;
+
+    try {
+      loaded_task.task->update(status);
+    } catch (const std::exception & error) {
+      status.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, error.what());
+    }
+
+    array.status.push_back(status);
+  }
+
+  diagnostics_publisher_->publish(array);
+}
+
 void SystemDiagnosticsNode::start_timer()
 {
   stop_timer();
   const auto period = std::chrono::duration<double>(1.0 / update_rate_);
   timer_ = create_wall_timer(
     std::chrono::duration_cast<std::chrono::nanoseconds>(period),
-    [this]() {
-      if (get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE) {
-        updater_.force_update();
-      }
-    });
+    [this]() {publish_diagnostics();});
 }
 
 void SystemDiagnosticsNode::stop_timer()

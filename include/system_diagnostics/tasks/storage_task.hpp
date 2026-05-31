@@ -22,13 +22,11 @@ public:
     const rclcpp_lifecycle::LifecycleNode::SharedPtr & node,
     const std::string & parameter_namespace) override;
   void cleanup() override;
-  std::string name() const override;
   void update(diagnostic_updater::DiagnosticStatusWrapper & status) override;
 
 private:
   static bool check_path_writable(const std::string & path);
 
-  std::string parameter_namespace_;
   std::vector<std::string> paths_{"/"};
   double warn_usage_ = 85.0;
   double error_usage_ = 95.0;

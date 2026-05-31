@@ -7,6 +7,7 @@ system_diagnostics:
     cpu:
       plugin: "system_diagnostics/CpuTask"
       enabled: true
+      name: "system_diagnostics/cpu"
       warn_usage: 80.0
       error_usage: 95.0
       warn_load_per_core: 1.0
@@ -16,6 +17,7 @@ system_diagnostics:
     memory:
       plugin: "system_diagnostics/MemoryTask"
       enabled: true
+      name: "system_diagnostics/memory"
       warn_usage: 85.0
       error_usage: 95.0
       warn_swap_usage: 20.0
@@ -25,6 +27,7 @@ system_diagnostics:
     storage:
       plugin: "system_diagnostics/StorageTask"
       enabled: true
+      name: "system_diagnostics/storage"
       paths:
         - "/"
       warn_usage: 85.0

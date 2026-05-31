@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -16,16 +17,18 @@
 namespace
 {
 
-template<typename ValueT>
-ValueT declare_or_get(
-  const rclcpp_lifecycle::LifecycleNode::SharedPtr & node,
-  const std::string & name,
-  const ValueT & default_value)
+std::string format_threshold_message(
+  const std::string & metric,
+  double value,
+  const std::string & threshold_name,
+  double threshold,
+  const std::string & suffix,
+  int precision)
 {
-  if (!node->has_parameter(name)) {
-    node->declare_parameter<ValueT>(name, default_value);
-  }
-  return node->get_parameter(name).get_value<ValueT>();
+  std::ostringstream message;
+  message << std::fixed << std::setprecision(precision) << metric << " " << value << suffix
+          << " exceeded " << threshold_name << " " << threshold << suffix;
+  return message.str();
 }
 
 }  // namespace
@@ -37,7 +40,7 @@ void CpuTask::configure(
   const rclcpp_lifecycle::LifecycleNode::SharedPtr & node,
   const std::string & parameter_namespace)
 {
-  parameter_namespace_ = parameter_namespace;
+  configure_name(node, parameter_namespace, "system_diagnostics/" + parameter_namespace);
   warn_usage_ = declare_or_get(node, parameter_namespace + ".warn_usage", 80.0);
   error_usage_ = declare_or_get(node, parameter_namespace + ".error_usage", 95.0);
   warn_load_per_core_ = declare_or_get(node, parameter_namespace + ".warn_load_per_core", 1.0);
@@ -49,11 +52,6 @@ void CpuTask::configure(
 void CpuTask::cleanup()
 {
   previous_sample_.reset();
-}
-
-std::string CpuTask::name() const
-{
-  return parameter_namespace_.empty() ? "CPU" : parameter_namespace_;
 }
 
 void CpuTask::update(diagnostic_updater::DiagnosticStatusWrapper & status)
@@ -91,10 +89,24 @@ void CpuTask::update(diagnostic_updater::DiagnosticStatusWrapper & status)
       (1.0 - static_cast<double>(idle_delta) / static_cast<double>(total_delta)) * 100.0;
     status.add("usage_percent", usage_percent);
 
-    if (usage_percent >= error_usage_ || load_per_core >= error_load_per_core_) {
-      status.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, "CPU threshold exceeded");
-    } else if (usage_percent >= warn_usage_ || load_per_core >= warn_load_per_core_) {
-      status.summary(diagnostic_msgs::msg::DiagnosticStatus::WARN, "CPU threshold warning");
+    if (usage_percent >= error_usage_) {
+      status.summary(
+        diagnostic_msgs::msg::DiagnosticStatus::ERROR,
+        format_threshold_message("CPU usage", usage_percent, "error_usage", error_usage_, "%", 1));
+    } else if (load_per_core >= error_load_per_core_) {
+      status.summary(
+        diagnostic_msgs::msg::DiagnosticStatus::ERROR,
+        format_threshold_message(
+          "CPU load/core", load_per_core, "error_load_per_core", error_load_per_core_, "", 2));
+    } else if (usage_percent >= warn_usage_) {
+      status.summary(
+        diagnostic_msgs::msg::DiagnosticStatus::WARN,
+        format_threshold_message("CPU usage", usage_percent, "warn_usage", warn_usage_, "%", 1));
+    } else if (load_per_core >= warn_load_per_core_) {
+      status.summary(
+        diagnostic_msgs::msg::DiagnosticStatus::WARN,
+        format_threshold_message(
+          "CPU load/core", load_per_core, "warn_load_per_core", warn_load_per_core_, "", 2));
     } else {
       status.summary(diagnostic_msgs::msg::DiagnosticStatus::OK, "CPU usage OK");
     }

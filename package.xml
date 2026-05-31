@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<!--
+  Copyright 2026 Maik Knof
+  SPDX-License-Identifier: Apache-2.0
+-->
+<package format="3">
+  <name>system_diagnostics</name>
+  <version>1.0.0</version>
+  <description>Plugin-based ROS 2 diagnostic updater for monitoring host system health such as CPU, memory, storage, thermal state, and network interfaces.</description>
+  <maintainer email="maik.knof@gmx.de">Maik Knof</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>diagnostic_msgs</depend>
+  <depend>diagnostic_updater</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
+  <depend>rclcpp_lifecycle</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

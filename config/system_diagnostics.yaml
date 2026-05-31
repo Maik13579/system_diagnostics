@@ -1,0 +1,32 @@
+system_diagnostics:
+  ros__parameters:
+    update_rate: 1.0
+    hardware_id: "host_pc"
+    tasks: ["cpu", "memory", "storage"]
+
+    cpu:
+      plugin: "system_diagnostics/CpuTask"
+      enabled: true
+      warn_usage: 80.0
+      error_usage: 95.0
+      warn_load_per_core: 1.0
+      error_load_per_core: 1.5
+      proc_path: "/proc"
+
+    memory:
+      plugin: "system_diagnostics/MemoryTask"
+      enabled: true
+      warn_usage: 85.0
+      error_usage: 95.0
+      warn_swap_usage: 20.0
+      error_swap_usage: 50.0
+      proc_path: "/proc"
+
+    storage:
+      plugin: "system_diagnostics/StorageTask"
+      enabled: true
+      paths:
+        - "/"
+      warn_usage: 85.0
+      error_usage: 95.0
+      check_writable: false

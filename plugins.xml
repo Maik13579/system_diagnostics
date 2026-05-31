@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<library path="system_diagnostics_tasks">
+  <class
+    name="system_diagnostics/CpuTask"
+    type="system_diagnostics::tasks::CpuTask"
+    base_class_type="system_diagnostics::DiagnosticTask">
+    <description>CPU usage and load diagnostics.</description>
+  </class>
+  <class
+    name="system_diagnostics/MemoryTask"
+    type="system_diagnostics::tasks::MemoryTask"
+    base_class_type="system_diagnostics::DiagnosticTask">
+    <description>RAM and swap usage diagnostics.</description>
+  </class>
+  <class
+    name="system_diagnostics/StorageTask"
+    type="system_diagnostics::tasks::StorageTask"
+    base_class_type="system_diagnostics::DiagnosticTask">
+    <description>Filesystem capacity and writability diagnostics.</description>
+  </class>
+</library>

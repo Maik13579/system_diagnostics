@@ -42,9 +42,13 @@ rclcpp_components_register_nodes(system_diagnostics_core
   "system_diagnostics::SystemDiagnosticsNode")
 
 add_library(system_diagnostics_tasks SHARED
+  src/tasks/battery_task.cpp
   src/tasks/cpu_task.cpp
   src/tasks/memory_task.cpp
+  src/tasks/network_task.cpp
   src/tasks/storage_task.cpp
+  src/tasks/thermal_task.cpp
+  src/tasks/time_sync_task.cpp
 )
 target_include_directories(system_diagnostics_tasks PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

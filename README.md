@@ -8,7 +8,7 @@ storage, thermal state, and network interfaces.
 - Lifecycle component: `system_diagnostics::SystemDiagnosticsNode`
 - Standalone executable: `system_diagnostics_node`
 - YAML-driven plugin loading through first-level parameter namespaces
-- Built-in CPU, memory, and storage diagnostic task plugins
+- Built-in CPU, memory, storage, thermal, network, battery, and time-sync diagnostic task plugins
 - Custom task plugins through `pluginlib`
 - Publishes standard `diagnostic_msgs/msg/DiagnosticArray` messages on `/diagnostics`
 
@@ -25,6 +25,16 @@ The package ships these task plugins:
 | `cpu` | `system_diagnostics/CpuTask` | `system_diagnostics/cpu` | `enabled`, `name`, `warn_usage`, `error_usage`, `warn_load_per_core`, `error_load_per_core`, `proc_path` |
 | `memory` | `system_diagnostics/MemoryTask` | `system_diagnostics/memory` | `enabled`, `name`, `warn_usage`, `error_usage`, `warn_swap_usage`, `error_swap_usage`, `proc_path` |
 | `storage` | `system_diagnostics/StorageTask` | `system_diagnostics/storage` | `enabled`, `name`, `paths`, `warn_usage`, `error_usage`, `check_writable` |
+| `thermal` | `system_diagnostics/ThermalTask` | `system_diagnostics/thermal` | `enabled`, `name`, `sysfs_path`, `zones`, `warn_temperature_c`, `error_temperature_c` |
+| `network` | `system_diagnostics/NetworkTask` | `system_diagnostics/network` | `enabled`, `name`, `sysfs_path`, `interfaces`, `require_carrier`, RX/TX error and drop delta thresholds |
+| `time_sync` | `system_diagnostics/TimeSyncTask` | `system_diagnostics/time_sync` | `enabled`, `name`, `require_synchronized`, offset and max-error thresholds in milliseconds |
+| `battery` | `system_diagnostics/BatteryTask` | `system_diagnostics/battery` | `enabled`, `name`, `power_supply_path`, `supplies`, `warn_capacity`, `error_capacity`, `require_present` |
+
+The default YAML enables `thermal`, `network`, and `time_sync` with strict
+source checks. `battery` is configured but disabled by default to avoid noisy
+desktop or container deployments. Omit `thermal.zones` to discover all
+`thermal_zone*` entries under `thermal.sysfs_path`; set it only when selecting
+specific zones.
 
 The node loads task namespaces that declare a `plugin` parameter. Set
 `tasks` to the namespace list to load, and set `<namespace>.enabled: false` to
@@ -70,7 +80,7 @@ Top-level parameters:
 | ------------- | --------- | --------------------------------------------------- |
 | `update_rate` | `1.0`     | Diagnostic update rate in Hz                        |
 | `hardware_id` | `host_pc` | Hardware ID attached to diagnostic statuses         |
-| `tasks`       | `[]`      | Ordered list of task namespaces to declare and load |
+| `tasks`       | Built-ins | Ordered list of task namespaces to declare and load |
 
 Task thresholds, source paths, and diagnostic names are configured under each
 task namespace. The configured `name` is the human-facing diagnostic status name

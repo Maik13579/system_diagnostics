@@ -18,4 +18,28 @@
     base_class_type="system_diagnostics::DiagnosticTask">
     <description>Filesystem capacity and writability diagnostics.</description>
   </class>
+  <class
+    name="system_diagnostics/ThermalTask"
+    type="system_diagnostics::tasks::ThermalTask"
+    base_class_type="system_diagnostics::DiagnosticTask">
+    <description>Thermal zone temperature diagnostics.</description>
+  </class>
+  <class
+    name="system_diagnostics/NetworkTask"
+    type="system_diagnostics::tasks::NetworkTask"
+    base_class_type="system_diagnostics::DiagnosticTask">
+    <description>Network interface carrier and counter diagnostics.</description>
+  </class>
+  <class
+    name="system_diagnostics/BatteryTask"
+    type="system_diagnostics::tasks::BatteryTask"
+    base_class_type="system_diagnostics::DiagnosticTask">
+    <description>Battery capacity and presence diagnostics.</description>
+  </class>
+  <class
+    name="system_diagnostics/TimeSyncTask"
+    type="system_diagnostics::tasks::TimeSyncTask"
+    base_class_type="system_diagnostics::DiagnosticTask">
+    <description>Kernel time synchronization diagnostics.</description>
+  </class>
 </library>

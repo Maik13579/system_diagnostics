@@ -4,8 +4,12 @@
 #include "system_diagnostics/diagnostic_task.hpp"
 #include "system_diagnostics/system_diagnostics_node.hpp"
 #include "system_diagnostics/tasks/cpu_task.hpp"
+#include "system_diagnostics/tasks/battery_task.hpp"
 #include "system_diagnostics/tasks/memory_task.hpp"
+#include "system_diagnostics/tasks/network_task.hpp"
 #include "system_diagnostics/tasks/storage_task.hpp"
+#include "system_diagnostics/tasks/thermal_task.hpp"
+#include "system_diagnostics/tasks/time_sync_task.hpp"
 
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
@@ -77,6 +81,26 @@ void write_file(const std::filesystem::path & path, const std::string & contents
   file << contents;
 }
 
+void make_network_interface(
+  const std::filesystem::path & root,
+  const std::string & name,
+  const std::string & carrier,
+  const std::string & operstate,
+  std::uint64_t rx_errors,
+  std::uint64_t tx_errors,
+  std::uint64_t rx_dropped,
+  std::uint64_t tx_dropped)
+{
+  const auto interface_path = root / name;
+  std::filesystem::create_directories(interface_path / "statistics");
+  write_file(interface_path / "carrier", carrier + "\n");
+  write_file(interface_path / "operstate", operstate + "\n");
+  write_file(interface_path / "statistics" / "rx_errors", std::to_string(rx_errors) + "\n");
+  write_file(interface_path / "statistics" / "tx_errors", std::to_string(tx_errors) + "\n");
+  write_file(interface_path / "statistics" / "rx_dropped", std::to_string(rx_dropped) + "\n");
+  write_file(interface_path / "statistics" / "tx_dropped", std::to_string(tx_dropped) + "\n");
+}
+
 }  // namespace
 
 TEST(DiagnosticTaskHelpers, DeclareOrGetDeclaresMissingParameter)
@@ -111,14 +135,26 @@ TEST(DiagnosticTaskNames, BuiltInTasksUseDefaultNames)
   system_diagnostics::tasks::CpuTask cpu;
   system_diagnostics::tasks::MemoryTask memory;
   system_diagnostics::tasks::StorageTask storage;
+  system_diagnostics::tasks::ThermalTask thermal;
+  system_diagnostics::tasks::NetworkTask network;
+  system_diagnostics::tasks::BatteryTask battery;
+  system_diagnostics::tasks::TimeSyncTask time_sync;
 
   cpu.configure(node, "cpu");
   memory.configure(node, "memory");
   storage.configure(node, "storage");
+  thermal.configure(node, "thermal");
+  network.configure(node, "network");
+  battery.configure(node, "battery");
+  time_sync.configure(node, "time_sync");
 
   EXPECT_EQ(cpu.name(), "system_diagnostics/cpu");
   EXPECT_EQ(memory.name(), "system_diagnostics/memory");
   EXPECT_EQ(storage.name(), "system_diagnostics/storage");
+  EXPECT_EQ(thermal.name(), "system_diagnostics/thermal");
+  EXPECT_EQ(network.name(), "system_diagnostics/network");
+  EXPECT_EQ(battery.name(), "system_diagnostics/battery");
+  EXPECT_EQ(time_sync.name(), "system_diagnostics/time_sync");
 }
 
 TEST(DiagnosticTaskNames, BuiltInTasksUseExplicitNameOverrides)
@@ -127,19 +163,35 @@ TEST(DiagnosticTaskNames, BuiltInTasksUseExplicitNameOverrides)
     rclcpp::Parameter("cpu.name", "custom/cpu"),
     rclcpp::Parameter("memory.name", "custom/memory"),
     rclcpp::Parameter("storage.name", "custom/storage"),
+    rclcpp::Parameter("thermal.name", "custom/thermal"),
+    rclcpp::Parameter("network.name", "custom/network"),
+    rclcpp::Parameter("battery.name", "custom/battery"),
+    rclcpp::Parameter("time_sync.name", "custom/time_sync"),
   });
 
   system_diagnostics::tasks::CpuTask cpu;
   system_diagnostics::tasks::MemoryTask memory;
   system_diagnostics::tasks::StorageTask storage;
+  system_diagnostics::tasks::ThermalTask thermal;
+  system_diagnostics::tasks::NetworkTask network;
+  system_diagnostics::tasks::BatteryTask battery;
+  system_diagnostics::tasks::TimeSyncTask time_sync;
 
   cpu.configure(node, "cpu");
   memory.configure(node, "memory");
   storage.configure(node, "storage");
+  thermal.configure(node, "thermal");
+  network.configure(node, "network");
+  battery.configure(node, "battery");
+  time_sync.configure(node, "time_sync");
 
   EXPECT_EQ(cpu.name(), "custom/cpu");
   EXPECT_EQ(memory.name(), "custom/memory");
   EXPECT_EQ(storage.name(), "custom/storage");
+  EXPECT_EQ(thermal.name(), "custom/thermal");
+  EXPECT_EQ(network.name(), "custom/network");
+  EXPECT_EQ(battery.name(), "custom/battery");
+  EXPECT_EQ(time_sync.name(), "custom/time_sync");
 }
 
 TEST(CpuTask, ReportsExceededUsageThreshold)
@@ -205,6 +257,197 @@ TEST(StorageTask, ReportsExceededUsageThreshold)
   EXPECT_EQ(status.level, diagnostic_msgs::msg::DiagnosticStatus::ERROR);
   EXPECT_NE(status.message.find("/ used "), std::string::npos);
   EXPECT_NE(status.message.find("exceeded error_usage 0.0%"), std::string::npos);
+}
+
+TEST(ThermalTask, ReportsWorstExceededZoneThreshold)
+{
+  TemporaryDirectory sysfs("system_diagnostics_thermal_test");
+  std::filesystem::create_directories(sysfs.path() / "thermal_zone0");
+  std::filesystem::create_directories(sysfs.path() / "thermal_zone1");
+  write_file(sysfs.path() / "thermal_zone0" / "type", "cpu_thermal\n");
+  write_file(sysfs.path() / "thermal_zone0" / "temp", "76000\n");
+  write_file(sysfs.path() / "thermal_zone1" / "type", "x86_pkg_temp\n");
+  write_file(sysfs.path() / "thermal_zone1" / "temp", "91200\n");
+
+  auto node = make_node("thermal_threshold_test", {
+    rclcpp::Parameter("thermal.sysfs_path", sysfs.path().string()),
+    rclcpp::Parameter("thermal.warn_temperature_c", 75.0),
+    rclcpp::Parameter("thermal.error_temperature_c", 90.0),
+  });
+  system_diagnostics::tasks::ThermalTask task;
+  task.configure(node, "thermal");
+
+  diagnostic_updater::DiagnosticStatusWrapper status;
+  task.update(status);
+
+  EXPECT_EQ(status.level, diagnostic_msgs::msg::DiagnosticStatus::ERROR);
+  EXPECT_EQ(status.message, "x86_pkg_temp 91.2 C exceeded error_temperature_c 90.0 C");
+}
+
+TEST(ThermalTask, MissingEnabledSourceIsError)
+{
+  TemporaryDirectory sysfs("system_diagnostics_thermal_missing_test");
+  auto node = make_node("thermal_missing_test", {
+    rclcpp::Parameter("thermal.sysfs_path", sysfs.path().string()),
+  });
+  system_diagnostics::tasks::ThermalTask task;
+  task.configure(node, "thermal");
+
+  diagnostic_updater::DiagnosticStatusWrapper status;
+  task.update(status);
+
+  EXPECT_EQ(status.level, diagnostic_msgs::msg::DiagnosticStatus::ERROR);
+  EXPECT_EQ(status.message, "No thermal zones found in " + sysfs.path().string());
+}
+
+TEST(NetworkTask, ReportsCarrierDown)
+{
+  TemporaryDirectory sysfs("system_diagnostics_network_carrier_test");
+  make_network_interface(sysfs.path(), "eth_test", "0", "down", 0, 0, 0, 0);
+
+  auto node = make_node("network_carrier_test", {
+    rclcpp::Parameter("network.sysfs_path", sysfs.path().string()),
+    rclcpp::Parameter("network.interfaces", std::vector<std::string>{"eth_test"}),
+    rclcpp::Parameter("network.require_carrier", true),
+  });
+  system_diagnostics::tasks::NetworkTask task;
+  task.configure(node, "network");
+
+  diagnostic_updater::DiagnosticStatusWrapper status;
+  task.update(status);
+
+  EXPECT_EQ(status.level, diagnostic_msgs::msg::DiagnosticStatus::ERROR);
+  EXPECT_EQ(status.message, "eth_test carrier is down");
+}
+
+TEST(NetworkTask, ReportsCounterDeltaThreshold)
+{
+  TemporaryDirectory sysfs("system_diagnostics_network_delta_test");
+  make_network_interface(sysfs.path(), "eth_test", "1", "up", 0, 0, 0, 0);
+
+  auto node = make_node("network_delta_test", {
+    rclcpp::Parameter("network.sysfs_path", sysfs.path().string()),
+    rclcpp::Parameter("network.interfaces", std::vector<std::string>{"eth_test"}),
+    rclcpp::Parameter("network.error_rx_errors_delta", 10),
+  });
+  system_diagnostics::tasks::NetworkTask task;
+  task.configure(node, "network");
+
+  diagnostic_updater::DiagnosticStatusWrapper status;
+  task.update(status);
+  make_network_interface(sysfs.path(), "eth_test", "1", "up", 12, 0, 0, 0);
+  task.update(status);
+
+  EXPECT_EQ(status.level, diagnostic_msgs::msg::DiagnosticStatus::ERROR);
+  EXPECT_EQ(status.message, "eth_test rx_errors delta 12 exceeded error_rx_errors_delta 10");
+}
+
+TEST(BatteryTask, ReportsLowCapacityThreshold)
+{
+  TemporaryDirectory sysfs("system_diagnostics_battery_threshold_test");
+  std::filesystem::create_directories(sysfs.path() / "BAT_TEST");
+  write_file(sysfs.path() / "BAT_TEST" / "present", "1\n");
+  write_file(sysfs.path() / "BAT_TEST" / "capacity", "12\n");
+  write_file(sysfs.path() / "BAT_TEST" / "status", "Discharging\n");
+
+  auto node = make_node("battery_threshold_test", {
+    rclcpp::Parameter("battery.power_supply_path", sysfs.path().string()),
+    rclcpp::Parameter("battery.supplies", std::vector<std::string>{"BAT_TEST"}),
+    rclcpp::Parameter("battery.error_capacity", 15.0),
+  });
+  system_diagnostics::tasks::BatteryTask task;
+  task.configure(node, "battery");
+
+  diagnostic_updater::DiagnosticStatusWrapper status;
+  task.update(status);
+
+  EXPECT_EQ(status.level, diagnostic_msgs::msg::DiagnosticStatus::ERROR);
+  EXPECT_EQ(status.message, "BAT_TEST capacity 12.0% below error_capacity 15.0%");
+}
+
+TEST(BatteryTask, ReportsMissingSupply)
+{
+  TemporaryDirectory sysfs("system_diagnostics_battery_missing_test");
+  auto node = make_node("battery_missing_test", {
+    rclcpp::Parameter("battery.power_supply_path", sysfs.path().string()),
+    rclcpp::Parameter("battery.supplies", std::vector<std::string>{"BAT_TEST"}),
+  });
+  system_diagnostics::tasks::BatteryTask task;
+  task.configure(node, "battery");
+
+  diagnostic_updater::DiagnosticStatusWrapper status;
+  task.update(status);
+
+  EXPECT_EQ(status.level, diagnostic_msgs::msg::DiagnosticStatus::ERROR);
+  EXPECT_EQ(
+    status.message,
+    "Battery supply does not exist: " + (sysfs.path() / "BAT_TEST").string());
+}
+
+TEST(TimeSyncTask, ReportsUnsynchronizedState)
+{
+  auto node = make_node("time_sync_unsynchronized_test", {
+    rclcpp::Parameter("time_sync.require_synchronized", true),
+  });
+  system_diagnostics::tasks::TimeSyncTask task;
+  task.configure(node, "time_sync");
+  task.set_sampler([]() {
+      system_diagnostics::tasks::TimeSyncTask::Sample sample;
+      sample.success = true;
+      sample.synchronized = false;
+      sample.status_bits = 64;
+      return sample;
+    });
+
+  diagnostic_updater::DiagnosticStatusWrapper status;
+  task.update(status);
+
+  EXPECT_EQ(status.level, diagnostic_msgs::msg::DiagnosticStatus::ERROR);
+  EXPECT_EQ(status.message, "Time synchronization is unsynchronized");
+}
+
+TEST(TimeSyncTask, ReportsExceededOffsetThreshold)
+{
+  auto node = make_node("time_sync_threshold_test", {
+    rclcpp::Parameter("time_sync.error_offset_ms", 100.0),
+  });
+  system_diagnostics::tasks::TimeSyncTask task;
+  task.configure(node, "time_sync");
+  task.set_sampler([]() {
+      system_diagnostics::tasks::TimeSyncTask::Sample sample;
+      sample.success = true;
+      sample.synchronized = true;
+      sample.offset_ms = -125.5;
+      return sample;
+    });
+
+  diagnostic_updater::DiagnosticStatusWrapper status;
+  task.update(status);
+
+  EXPECT_EQ(status.level, diagnostic_msgs::msg::DiagnosticStatus::ERROR);
+  EXPECT_EQ(status.message, "Time offset 125.500 ms exceeded error_offset_ms 100.000 ms");
+}
+
+TEST(TimeSyncTask, ReportsSynchronizedState)
+{
+  auto node = make_node("time_sync_ok_test");
+  system_diagnostics::tasks::TimeSyncTask task;
+  task.configure(node, "time_sync");
+  task.set_sampler([]() {
+      system_diagnostics::tasks::TimeSyncTask::Sample sample;
+      sample.success = true;
+      sample.synchronized = true;
+      sample.offset_ms = 1.0;
+      sample.max_error_ms = 2.0;
+      sample.estimated_error_ms = 1.0;
+      return sample;
+    });
+
+  diagnostic_updater::DiagnosticStatusWrapper status;
+  task.update(status);
+
+  EXPECT_EQ(status.level, diagnostic_msgs::msg::DiagnosticStatus::OK);
+  EXPECT_EQ(status.message, "Time synchronization OK");
 }
 
 TEST(SystemDiagnosticsNode, PublishesConfiguredStatusNameWithoutNodePrefix)

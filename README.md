@@ -16,10 +16,10 @@ storage, thermal state, and network interfaces.
 
 The package ships these task plugins:
 
-| Namespace | Plugin |
-| --- | --- |
-| `cpu` | `system_diagnostics/CpuTask` |
-| `memory` | `system_diagnostics/MemoryTask` |
+| Namespace | Plugin                           |
+| --------- | -------------------------------- |
+| `cpu`     | `system_diagnostics/CpuTask`     |
+| `memory`  | `system_diagnostics/MemoryTask`  |
 | `storage` | `system_diagnostics/StorageTask` |
 
 The node loads task namespaces that declare a `plugin` parameter. Set
@@ -58,56 +58,14 @@ config/system_diagnostics.yaml
 
 Top-level parameters:
 
-| Parameter | Default | Description |
-| --- | --- | --- |
-| `update_rate` | `1.0` | Diagnostic update rate in Hz |
-| `hardware_id` | `host_pc` | Hardware ID attached to diagnostic statuses |
-| `tasks` | `[]` | Ordered list of task namespaces to declare and load |
+| Parameter     | Default   | Description                                         |
+| ------------- | --------- | --------------------------------------------------- |
+| `update_rate` | `1.0`     | Diagnostic update rate in Hz                        |
+| `hardware_id` | `host_pc` | Hardware ID attached to diagnostic statuses         |
+| `tasks`       | `[]`      | Ordered list of task namespaces to declare and load |
 
 Task thresholds and source paths are configured under each task namespace. See
 `config/system_diagnostics.yaml` for the complete default parameter set.
-
-## Build
-
-From the workspace root:
-
-```bash
-source /opt/ros/${ROS_DISTRO}/setup.bash
-colcon build --base-paths /root/ros2_ws/src --packages-select system_diagnostics --event-handlers console_direct+
-```
-
-## Run
-
-```bash
-source /opt/ros/${ROS_DISTRO}/setup.bash
-source /root/ros2_ws/install/setup.bash
-ros2 launch system_diagnostics system_diagnostics.launch.py
-```
-
-Inspect output:
-
-```bash
-ros2 topic echo /diagnostics
-```
-
-## Component Loading
-
-The package exports the lifecycle component:
-
-```text
-system_diagnostics::SystemDiagnosticsNode
-```
-
-Use node options that keep undeclared parameter access disabled:
-
-```cpp
-rclcpp::NodeOptions()
-  .allow_undeclared_parameters(false)
-  .use_intra_process_comms(true);
-```
-
-`SystemDiagnosticsNode` explicitly declares `tasks`, then declares YAML override
-parameters under each listed task namespace.
 
 ## Writing Plugins
 

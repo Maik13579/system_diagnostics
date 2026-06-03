@@ -13,6 +13,12 @@
     <description>RAM and swap usage diagnostics.</description>
   </class>
   <class
+    name="system_diagnostics/DockerMemoryTask"
+    type="system_diagnostics::tasks::DockerMemoryTask"
+    base_class_type="system_diagnostics::DiagnosticTask">
+    <description>Docker container memory usage diagnostics.</description>
+  </class>
+  <class
     name="system_diagnostics/StorageTask"
     type="system_diagnostics::tasks::StorageTask"
     base_class_type="system_diagnostics::DiagnosticTask">

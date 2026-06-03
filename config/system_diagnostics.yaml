@@ -2,7 +2,7 @@ system_diagnostics:
   ros__parameters:
     update_rate: 1.0
     hardware_id: "host_pc"
-    tasks: ["cpu", "memory", "storage", "thermal", "network", "time_sync", "battery"]
+    tasks: ["cpu", "memory", "docker_memory", "storage", "thermal", "network", "time_sync", "battery"]
 
     cpu:
       plugin: "system_diagnostics/CpuTask"
@@ -23,6 +23,16 @@ system_diagnostics:
       warn_swap_usage: 20.0
       error_swap_usage: 50.0
       proc_path: "/proc"
+
+    docker_memory:
+      plugin: "system_diagnostics/DockerMemoryTask"
+      enabled: false
+      name: "system_diagnostics/docker_memory"
+      socket_path: "/var/run/docker.sock"
+      warn_usage: 80.0
+      error_usage: 90.0
+      warn_usage_bytes: 0
+      error_usage_bytes: 0
 
     storage:
       plugin: "system_diagnostics/StorageTask"

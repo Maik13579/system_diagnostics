@@ -8,7 +8,7 @@ storage, thermal state, and network interfaces.
 - Lifecycle component: `system_diagnostics::SystemDiagnosticsNode`
 - Standalone executable: `system_diagnostics_node`
 - YAML-driven plugin loading through first-level parameter namespaces
-- Built-in CPU, memory, storage, thermal, network, battery, and time-sync diagnostic task plugins
+- Built-in CPU, memory, Docker memory, storage, thermal, network, battery, and time-sync diagnostic task plugins
 - Custom task plugins through `pluginlib`
 - Publishes standard `diagnostic_msgs/msg/DiagnosticArray` messages on `/diagnostics`
 
@@ -24,6 +24,7 @@ The package ships these task plugins:
 | --------- | ------ | ----------------------- | ---------- |
 | `cpu` | `system_diagnostics/CpuTask` | `system_diagnostics/cpu` | `enabled`, `name`, `warn_usage`, `error_usage`, `warn_load_per_core`, `error_load_per_core`, `proc_path` |
 | `memory` | `system_diagnostics/MemoryTask` | `system_diagnostics/memory` | `enabled`, `name`, `warn_usage`, `error_usage`, `warn_swap_usage`, `error_swap_usage`, `proc_path` |
+| `docker_memory` | `system_diagnostics/DockerMemoryTask` | `system_diagnostics/docker_memory` | `enabled`, `name`, `socket_path`, `warn_usage`, `error_usage`, `warn_usage_bytes`, `error_usage_bytes` |
 | `storage` | `system_diagnostics/StorageTask` | `system_diagnostics/storage` | `enabled`, `name`, `paths`, `warn_usage`, `error_usage`, `check_writable` |
 | `thermal` | `system_diagnostics/ThermalTask` | `system_diagnostics/thermal` | `enabled`, `name`, `sysfs_path`, `zones`, `warn_temperature_c`, `error_temperature_c` |
 | `network` | `system_diagnostics/NetworkTask` | `system_diagnostics/network` | `enabled`, `name`, `sysfs_path`, `interfaces`, `require_carrier`, RX/TX error and drop delta thresholds |
@@ -31,8 +32,11 @@ The package ships these task plugins:
 | `battery` | `system_diagnostics/BatteryTask` | `system_diagnostics/battery` | `enabled`, `name`, `power_supply_path`, `supplies`, `warn_capacity`, `error_capacity`, `require_present` |
 
 The default YAML enables `thermal`, `network`, and `time_sync` with strict
-source checks. `battery` is configured but disabled by default to avoid noisy
-desktop or container deployments. Omit `thermal.zones` to discover all
+source checks. `docker_memory` and `battery` are configured but disabled by
+default to avoid noisy desktop or container deployments. Enable `docker_memory`
+after mounting `/var/run/docker.sock` into the diagnostics container. It checks
+all running containers and emits a direct diagnostic key-value for each one, for example
+`nav: 178.8 MiB`, plus detailed `container.<name>.*` values. Omit `thermal.zones` to discover all
 `thermal_zone*` entries under `thermal.sysfs_path`; set it only when selecting
 specific zones.
 

@@ -44,6 +44,7 @@ rclcpp_components_register_nodes(system_diagnostics_core
 add_library(system_diagnostics_tasks SHARED
   src/tasks/battery_task.cpp
   src/tasks/cpu_task.cpp
+  src/tasks/docker_memory_task.cpp
   src/tasks/memory_task.cpp
   src/tasks/network_task.cpp
   src/tasks/storage_task.cpp

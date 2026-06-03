@@ -5,6 +5,7 @@
 #include "system_diagnostics/system_diagnostics_node.hpp"
 #include "system_diagnostics/tasks/cpu_task.hpp"
 #include "system_diagnostics/tasks/battery_task.hpp"
+#include "system_diagnostics/tasks/docker_memory_task.hpp"
 #include "system_diagnostics/tasks/memory_task.hpp"
 #include "system_diagnostics/tasks/network_task.hpp"
 #include "system_diagnostics/tasks/storage_task.hpp"
@@ -134,6 +135,7 @@ TEST(DiagnosticTaskNames, BuiltInTasksUseDefaultNames)
 
   system_diagnostics::tasks::CpuTask cpu;
   system_diagnostics::tasks::MemoryTask memory;
+  system_diagnostics::tasks::DockerMemoryTask docker_memory;
   system_diagnostics::tasks::StorageTask storage;
   system_diagnostics::tasks::ThermalTask thermal;
   system_diagnostics::tasks::NetworkTask network;
@@ -142,6 +144,7 @@ TEST(DiagnosticTaskNames, BuiltInTasksUseDefaultNames)
 
   cpu.configure(node, "cpu");
   memory.configure(node, "memory");
+  docker_memory.configure(node, "docker_memory");
   storage.configure(node, "storage");
   thermal.configure(node, "thermal");
   network.configure(node, "network");
@@ -150,6 +153,7 @@ TEST(DiagnosticTaskNames, BuiltInTasksUseDefaultNames)
 
   EXPECT_EQ(cpu.name(), "system_diagnostics/cpu");
   EXPECT_EQ(memory.name(), "system_diagnostics/memory");
+  EXPECT_EQ(docker_memory.name(), "system_diagnostics/docker_memory");
   EXPECT_EQ(storage.name(), "system_diagnostics/storage");
   EXPECT_EQ(thermal.name(), "system_diagnostics/thermal");
   EXPECT_EQ(network.name(), "system_diagnostics/network");
@@ -162,6 +166,7 @@ TEST(DiagnosticTaskNames, BuiltInTasksUseExplicitNameOverrides)
   auto node = make_node("explicit_task_name_test", {
     rclcpp::Parameter("cpu.name", "custom/cpu"),
     rclcpp::Parameter("memory.name", "custom/memory"),
+    rclcpp::Parameter("docker_memory.name", "custom/docker_memory"),
     rclcpp::Parameter("storage.name", "custom/storage"),
     rclcpp::Parameter("thermal.name", "custom/thermal"),
     rclcpp::Parameter("network.name", "custom/network"),
@@ -171,6 +176,7 @@ TEST(DiagnosticTaskNames, BuiltInTasksUseExplicitNameOverrides)
 
   system_diagnostics::tasks::CpuTask cpu;
   system_diagnostics::tasks::MemoryTask memory;
+  system_diagnostics::tasks::DockerMemoryTask docker_memory;
   system_diagnostics::tasks::StorageTask storage;
   system_diagnostics::tasks::ThermalTask thermal;
   system_diagnostics::tasks::NetworkTask network;
@@ -179,6 +185,7 @@ TEST(DiagnosticTaskNames, BuiltInTasksUseExplicitNameOverrides)
 
   cpu.configure(node, "cpu");
   memory.configure(node, "memory");
+  docker_memory.configure(node, "docker_memory");
   storage.configure(node, "storage");
   thermal.configure(node, "thermal");
   network.configure(node, "network");
@@ -187,6 +194,7 @@ TEST(DiagnosticTaskNames, BuiltInTasksUseExplicitNameOverrides)
 
   EXPECT_EQ(cpu.name(), "custom/cpu");
   EXPECT_EQ(memory.name(), "custom/memory");
+  EXPECT_EQ(docker_memory.name(), "custom/docker_memory");
   EXPECT_EQ(storage.name(), "custom/storage");
   EXPECT_EQ(thermal.name(), "custom/thermal");
   EXPECT_EQ(network.name(), "custom/network");
@@ -240,6 +248,56 @@ TEST(MemoryTask, ReportsExceededMemoryThreshold)
 
   EXPECT_EQ(status.level, diagnostic_msgs::msg::DiagnosticStatus::ERROR);
   EXPECT_EQ(status.message, "Memory usage 96.0% exceeded error_usage 95.0%");
+}
+
+TEST(DockerMemoryTask, ReportsWorstContainerOverThreshold)
+{
+  auto node = make_node("docker_memory_threshold_test", {
+    rclcpp::Parameter("docker_memory.error_usage", 90.0),
+  });
+  system_diagnostics::tasks::DockerMemoryTask task;
+  task.configure(node, "docker_memory");
+  task.set_sampler([]() {
+      system_diagnostics::tasks::DockerMemoryTask::Sample sample;
+      sample.success = true;
+      sample.containers = {
+        {"abc123", "nav", 950, 1000},
+        {"def456", "velodyne", 400, 1000},
+      };
+      return sample;
+    });
+
+  diagnostic_updater::DiagnosticStatusWrapper status;
+  task.update(status);
+
+  EXPECT_EQ(status.level, diagnostic_msgs::msg::DiagnosticStatus::ERROR);
+  EXPECT_EQ(status.message, "nav memory usage 95.0% exceeded error_usage 90.0%");
+  const auto nav_value = std::find_if(
+    status.values.begin(), status.values.end(),
+    [](const diagnostic_msgs::msg::KeyValue & value) {
+      return value.key == "nav";
+    });
+  ASSERT_NE(nav_value, status.values.end());
+  EXPECT_EQ(nav_value->value, "950 B");
+}
+
+TEST(DockerMemoryTask, ReportsSocketError)
+{
+  auto node = make_node("docker_memory_socket_error_test");
+  system_diagnostics::tasks::DockerMemoryTask task;
+  task.configure(node, "docker_memory");
+  task.set_sampler([]() {
+      system_diagnostics::tasks::DockerMemoryTask::Sample sample;
+      sample.success = false;
+      sample.error = "connect failed for /var/run/docker.sock: No such file or directory";
+      return sample;
+    });
+
+  diagnostic_updater::DiagnosticStatusWrapper status;
+  task.update(status);
+
+  EXPECT_EQ(status.level, diagnostic_msgs::msg::DiagnosticStatus::ERROR);
+  EXPECT_EQ(status.message, "connect failed for /var/run/docker.sock: No such file or directory");
 }
 
 TEST(StorageTask, ReportsExceededUsageThreshold)

@@ -83,6 +83,7 @@ Top-level parameters:
 | Parameter     | Default   | Description                                         |
 | ------------- | --------- | --------------------------------------------------- |
 | `update_rate` | `1.0`     | Diagnostic update rate in Hz                        |
+| `num_threads` | `1`       | Number of worker threads used to update tasks       |
 | `hardware_id` | `host_pc` | Hardware ID attached to diagnostic statuses         |
 | `tasks`       | Built-ins | Ordered list of task namespaces to declare and load |
 
@@ -90,6 +91,10 @@ Task thresholds, source paths, and diagnostic names are configured under each
 task namespace. The configured `name` is the human-facing diagnostic status name
 emitted on `/diagnostics`; no node-name prefix is added. See
 `config/system_diagnostics.yaml` for the complete default parameter set.
+
+Each published `DiagnosticArray` also includes `system_diagnostics/update_timing`
+with one key/value per task namespace, an `all` total duration in milliseconds,
+and an ERROR summary when the cycle takes longer than the configured period.
 
 ## Writing Plugins
 

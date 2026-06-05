@@ -62,6 +62,7 @@ private:
   std::vector<LoadedTask> tasks_;
   rclcpp::TimerBase::SharedPtr timer_;
   double update_rate_ = 1.0;
+  int num_threads_ = 1;
   std::string hardware_id_ = "host";
   std::vector<std::string> task_names_;
 };

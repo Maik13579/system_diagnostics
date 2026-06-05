@@ -102,9 +102,8 @@ void make_network_interface(
   write_file(interface_path / "statistics" / "tx_dropped", std::to_string(tx_dropped) + "\n");
 }
 
-std::optional<std::string> diagnostic_value(
-  const diagnostic_updater::DiagnosticStatusWrapper & status,
-  const std::string & key)
+template<typename StatusT>
+std::optional<std::string> diagnostic_value(const StatusT & status, const std::string & key)
 {
   const auto value = std::find_if(
     status.values.begin(), status.values.end(),
@@ -623,10 +622,167 @@ TEST(SystemDiagnosticsNode, PublishesConfiguredStatusNameWithoutNodePrefix)
 
   ASSERT_TRUE(received_message.has_value());
   ASSERT_TRUE(has_expected_status());
+  const auto cpu_status = std::find_if(
+    received_message->status.begin(), received_message->status.end(),
+    [](const diagnostic_msgs::msg::DiagnosticStatus & status) {
+      return status.name == "system_diagnostics/cpu";
+    });
+  ASSERT_NE(cpu_status, received_message->status.end());
+  EXPECT_TRUE(diagnostic_value(*cpu_status, "update_duration_ms").has_value());
+  const auto timing_status = std::find_if(
+    received_message->status.begin(), received_message->status.end(),
+    [](const diagnostic_msgs::msg::DiagnosticStatus & status) {
+      return status.name == "system_diagnostics/update_timing";
+    });
+  ASSERT_NE(timing_status, received_message->status.end());
+  EXPECT_EQ(timing_status->level, diagnostic_msgs::msg::DiagnosticStatus::OK);
+  EXPECT_EQ(diagnostic_value(*timing_status, "task_count"), "1");
+  EXPECT_EQ(diagnostic_value(*timing_status, "num_threads"), "1");
+  EXPECT_TRUE(diagnostic_value(*timing_status, "cpu").has_value());
+  EXPECT_TRUE(diagnostic_value(*timing_status, "all").has_value());
+  EXPECT_TRUE(diagnostic_value(*timing_status, "configured_period_ms").has_value());
   for (const auto & status : received_message->status) {
     EXPECT_NE(status.name, "system_diagnostics: /system_diagnostics/cpu");
     EXPECT_NE(status.name, "system_diagnostics: system_diagnostics/cpu");
   }
+
+  diagnostics_node->on_deactivate(rclcpp_lifecycle::State());
+}
+
+TEST(SystemDiagnosticsNode, PublishesTimingKeysForParallelTaskUpdates)
+{
+  TemporaryDirectory proc("system_diagnostics_node_parallel_timing_test");
+  write_file(proc.path() / "loadavg", "0.00 0.00 0.00 1/1 1\n");
+  write_file(proc.path() / "stat", "cpu 100 0 0 100 0 0 0 0 0 0\n");
+  write_file(
+    proc.path() / "meminfo",
+    "MemTotal: 1000 kB\n"
+    "MemAvailable: 900 kB\n"
+    "SwapTotal: 1000 kB\n"
+    "SwapFree: 1000 kB\n");
+
+  rclcpp::NodeOptions options;
+  options.parameter_overrides({
+    rclcpp::Parameter("update_rate", 20.0),
+    rclcpp::Parameter("num_threads", 2),
+    rclcpp::Parameter("hardware_id", "test_host"),
+    rclcpp::Parameter("tasks", std::vector<std::string>{"cpu", "memory"}),
+    rclcpp::Parameter("cpu.plugin", "system_diagnostics/CpuTask"),
+    rclcpp::Parameter("cpu.enabled", true),
+    rclcpp::Parameter("cpu.name", "system_diagnostics/cpu"),
+    rclcpp::Parameter("cpu.proc_path", proc.path().string()),
+    rclcpp::Parameter("memory.plugin", "system_diagnostics/MemoryTask"),
+    rclcpp::Parameter("memory.enabled", true),
+    rclcpp::Parameter("memory.name", "system_diagnostics/memory"),
+    rclcpp::Parameter("memory.proc_path", proc.path().string()),
+  });
+
+  auto diagnostics_node = std::make_shared<system_diagnostics::SystemDiagnosticsNode>(options);
+  auto subscriber_node = std::make_shared<rclcpp::Node>("diagnostics_parallel_timing_subscriber");
+  std::optional<diagnostic_msgs::msg::DiagnosticArray> received_message;
+  auto subscription = subscriber_node->create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
+    "/diagnostics",
+    rclcpp::SystemDefaultsQoS(),
+    [&received_message](const diagnostic_msgs::msg::DiagnosticArray & message) {
+      received_message = message;
+    });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(diagnostics_node->get_node_base_interface());
+  executor.add_node(subscriber_node);
+
+  ASSERT_EQ(
+    diagnostics_node->on_configure(rclcpp_lifecycle::State()),
+    system_diagnostics::SystemDiagnosticsNode::CallbackReturn::SUCCESS);
+  ASSERT_EQ(
+    diagnostics_node->on_activate(rclcpp_lifecycle::State()),
+    system_diagnostics::SystemDiagnosticsNode::CallbackReturn::SUCCESS);
+
+  const auto deadline = std::chrono::steady_clock::now() + 3s;
+  auto has_parallel_timing = [&received_message]() {
+      if (!received_message) {
+        return false;
+      }
+      const auto timing_status = std::find_if(
+        received_message->status.begin(), received_message->status.end(),
+        [](const diagnostic_msgs::msg::DiagnosticStatus & status) {
+          return status.name == "system_diagnostics/update_timing";
+        });
+      return timing_status != received_message->status.end() &&
+             diagnostic_value(*timing_status, "num_threads") == "2" &&
+             diagnostic_value(*timing_status, "cpu").has_value() &&
+             diagnostic_value(*timing_status, "memory").has_value() &&
+             diagnostic_value(*timing_status, "all").has_value();
+    };
+
+  while (!has_parallel_timing() && std::chrono::steady_clock::now() < deadline) {
+    executor.spin_some(50ms);
+  }
+
+  ASSERT_TRUE(received_message.has_value());
+  ASSERT_TRUE(has_parallel_timing());
+
+  diagnostics_node->on_deactivate(rclcpp_lifecycle::State());
+}
+
+TEST(SystemDiagnosticsNode, ReportsTimingErrorWhenUpdateExceedsConfiguredPeriod)
+{
+  TemporaryDirectory proc("system_diagnostics_node_timing_error_test");
+  write_file(proc.path() / "loadavg", "0.00 0.00 0.00 1/1 1\n");
+  write_file(proc.path() / "stat", "cpu 100 0 0 100 0 0 0 0 0 0\n");
+
+  rclcpp::NodeOptions options;
+  options.parameter_overrides({
+    rclcpp::Parameter("update_rate", 1000000.0),
+    rclcpp::Parameter("hardware_id", "test_host"),
+    rclcpp::Parameter("tasks", std::vector<std::string>{"cpu"}),
+    rclcpp::Parameter("cpu.plugin", "system_diagnostics/CpuTask"),
+    rclcpp::Parameter("cpu.enabled", true),
+    rclcpp::Parameter("cpu.name", "system_diagnostics/cpu"),
+    rclcpp::Parameter("cpu.proc_path", proc.path().string()),
+  });
+
+  auto diagnostics_node = std::make_shared<system_diagnostics::SystemDiagnosticsNode>(options);
+  auto subscriber_node = std::make_shared<rclcpp::Node>("diagnostics_timing_subscriber");
+  std::optional<diagnostic_msgs::msg::DiagnosticArray> received_message;
+  auto subscription = subscriber_node->create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
+    "/diagnostics",
+    rclcpp::SystemDefaultsQoS(),
+    [&received_message](const diagnostic_msgs::msg::DiagnosticArray & message) {
+      received_message = message;
+    });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(diagnostics_node->get_node_base_interface());
+  executor.add_node(subscriber_node);
+
+  ASSERT_EQ(
+    diagnostics_node->on_configure(rclcpp_lifecycle::State()),
+    system_diagnostics::SystemDiagnosticsNode::CallbackReturn::SUCCESS);
+  ASSERT_EQ(
+    diagnostics_node->on_activate(rclcpp_lifecycle::State()),
+    system_diagnostics::SystemDiagnosticsNode::CallbackReturn::SUCCESS);
+
+  const auto deadline = std::chrono::steady_clock::now() + 3s;
+  auto has_timing_error = [&received_message]() {
+      if (!received_message) {
+        return false;
+      }
+      const auto timing_status = std::find_if(
+        received_message->status.begin(), received_message->status.end(),
+        [](const diagnostic_msgs::msg::DiagnosticStatus & status) {
+          return status.name == "system_diagnostics/update_timing";
+        });
+      return timing_status != received_message->status.end() &&
+             timing_status->level == diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+    };
+
+  while (!has_timing_error() && std::chrono::steady_clock::now() < deadline) {
+    executor.spin_some(50ms);
+  }
+
+  ASSERT_TRUE(received_message.has_value());
+  ASSERT_TRUE(has_timing_error());
 
   diagnostics_node->on_deactivate(rclcpp_lifecycle::State());
 }

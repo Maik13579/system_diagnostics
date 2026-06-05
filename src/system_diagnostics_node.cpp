@@ -6,8 +6,14 @@
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <iomanip>
+#include <sstream>
+#include <thread>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -19,6 +25,36 @@ bool is_task_parameter(const std::string & parameter_name, const std::string & t
 {
   return parameter_name.rfind(task_name + ".", 0) == 0;
 }
+
+std::string task_timing_key(const std::string & parameter_namespace)
+{
+  const auto separator = parameter_namespace.find_last_of('/');
+  if (separator == std::string::npos || separator + 1 >= parameter_namespace.size()) {
+    return parameter_namespace;
+  }
+  return parameter_namespace.substr(separator + 1);
+}
+
+double elapsed_ms(
+  const std::chrono::steady_clock::time_point & start,
+  const std::chrono::steady_clock::time_point & stop)
+{
+  return std::chrono::duration<double, std::milli>(stop - start).count();
+}
+
+std::string format_ms(double value)
+{
+  std::ostringstream stream;
+  stream << std::fixed << std::setprecision(3) << value;
+  return stream.str();
+}
+
+struct TaskUpdateResult
+{
+  diagnostic_msgs::msg::DiagnosticStatus status;
+  std::string timing_key;
+  double duration_ms = 0.0;
+};
 
 }  // namespace
 
@@ -48,6 +84,11 @@ SystemDiagnosticsNode::CallbackReturn SystemDiagnosticsNode::on_configure(
   if (update_rate_ <= 0.0) {
     RCLCPP_WARN(get_logger(), "update_rate must be positive; using 1.0 Hz");
     update_rate_ = 1.0;
+  }
+  num_threads_ = static_cast<int>(get_parameter("num_threads").as_int());
+  if (num_threads_ <= 0) {
+    RCLCPP_WARN(get_logger(), "num_threads must be positive; using 1");
+    num_threads_ = 1;
   }
 
   hardware_id_ = get_parameter("hardware_id").as_string();
@@ -101,6 +142,9 @@ void SystemDiagnosticsNode::declare_node_parameters()
   }
   if (!has_parameter("hardware_id")) {
     declare_parameter<std::string>("hardware_id", "host");
+  }
+  if (!has_parameter("num_threads")) {
+    declare_parameter<int>("num_threads", 1);
   }
   if (!has_parameter("tasks")) {
     declare_parameter<std::vector<std::string>>("tasks", std::vector<std::string>{});
@@ -169,10 +213,19 @@ void SystemDiagnosticsNode::cleanup_tasks()
 
 void SystemDiagnosticsNode::publish_diagnostics()
 {
+  const auto cycle_start = std::chrono::steady_clock::now();
   diagnostic_msgs::msg::DiagnosticArray array;
   array.header.stamp = now();
+  diagnostic_updater::DiagnosticStatusWrapper timing_status;
+  timing_status.name = "system_diagnostics/update_timing";
+  timing_status.hardware_id = hardware_id_;
+  timing_status.add("task_count", static_cast<int>(tasks_.size()));
+  timing_status.add("num_threads", num_threads_);
 
-  for (const auto & loaded_task : tasks_) {
+  std::vector<TaskUpdateResult> results(tasks_.size());
+  auto update_task = [this, &results](std::size_t index) {
+    const auto & loaded_task = tasks_[index];
+    const auto task_start = std::chrono::steady_clock::now();
     diagnostic_updater::DiagnosticStatusWrapper status;
     status.name = loaded_task.task->name();
     status.hardware_id = hardware_id_;
@@ -183,8 +236,62 @@ void SystemDiagnosticsNode::publish_diagnostics()
       status.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, error.what());
     }
 
-    array.status.push_back(status);
+    const auto task_duration_ms = elapsed_ms(task_start, std::chrono::steady_clock::now());
+    status.add("update_duration_ms", format_ms(task_duration_ms));
+    results[index].status = status;
+    results[index].timing_key = task_timing_key(loaded_task.parameter_namespace);
+    results[index].duration_ms = task_duration_ms;
+  };
+
+  if (num_threads_ == 1 || tasks_.size() <= 1) {
+    for (std::size_t index = 0; index < tasks_.size(); ++index) {
+      update_task(index);
+    }
+  } else {
+    std::atomic<std::size_t> next_index{0};
+    const auto worker_count = std::min<std::size_t>(
+      static_cast<std::size_t>(num_threads_), tasks_.size());
+    std::vector<std::thread> workers;
+    workers.reserve(worker_count);
+    for (std::size_t worker = 0; worker < worker_count; ++worker) {
+      workers.emplace_back([&next_index, &update_task, task_count = tasks_.size()]() {
+        while (true) {
+          const auto index = next_index.fetch_add(1);
+          if (index >= task_count) {
+            break;
+          }
+          update_task(index);
+        }
+      });
+    }
+    for (auto & worker : workers) {
+      worker.join();
+    }
   }
+
+  for (const auto & result : results) {
+    timing_status.add(result.timing_key, format_ms(result.duration_ms));
+    array.status.push_back(result.status);
+  }
+
+  const auto cycle_duration_ms = elapsed_ms(cycle_start, std::chrono::steady_clock::now());
+  const auto period_ms = 1000.0 / update_rate_;
+  timing_status.add("all", format_ms(cycle_duration_ms));
+  timing_status.add("configured_period_ms", format_ms(period_ms));
+  if (cycle_duration_ms > period_ms) {
+    timing_status.summary(
+      diagnostic_msgs::msg::DiagnosticStatus::ERROR,
+      "Diagnostics update cycle exceeded configured period");
+    RCLCPP_WARN(
+      get_logger(),
+      "Diagnostics update cycle took %.3f ms, exceeding configured period %.3f ms",
+      cycle_duration_ms, period_ms);
+  } else {
+    timing_status.summary(
+      diagnostic_msgs::msg::DiagnosticStatus::OK,
+      "Diagnostics update cycle within configured period");
+  }
+  array.status.push_back(timing_status);
 
   diagnostics_publisher_->publish(array);
 }

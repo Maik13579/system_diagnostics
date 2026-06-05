@@ -354,6 +354,11 @@ TEST(ThermalTask, ReportsWorstExceededZoneThreshold)
 
   EXPECT_EQ(status.level, diagnostic_msgs::msg::DiagnosticStatus::ERROR);
   EXPECT_EQ(status.message, "x86_pkg_temp 91.2 C exceeded error_temperature_c 90.0 C");
+  EXPECT_EQ(diagnostic_value(status, "zone_count"), "2");
+  EXPECT_TRUE(
+    diagnostic_value(status, "thermal_zone0.cpu_thermal.read_duration_ms").has_value());
+  EXPECT_TRUE(
+    diagnostic_value(status, "thermal_zone1.x86_pkg_temp.read_duration_ms").has_value());
 }
 
 TEST(ThermalTask, MissingEnabledSourceIsError)

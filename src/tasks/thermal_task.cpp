@@ -7,6 +7,7 @@
 #include <pluginlib/class_list_macros.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -75,6 +76,20 @@ std::string format_temperature_message(
   return message.str();
 }
 
+double elapsed_ms(
+  const std::chrono::steady_clock::time_point & start,
+  const std::chrono::steady_clock::time_point & stop)
+{
+  return std::chrono::duration<double, std::milli>(stop - start).count();
+}
+
+std::string format_ms(double value)
+{
+  std::ostringstream stream;
+  stream << std::fixed << std::setprecision(3) << value;
+  return stream.str();
+}
+
 }  // namespace
 
 namespace system_diagnostics::tasks
@@ -92,9 +107,20 @@ void ThermalTask::configure(
     node, parameter_namespace + ".warn_temperature_c", 75.0);
   error_temperature_c_ = declare_or_get(
     node, parameter_namespace + ".error_temperature_c", 90.0);
+  discovery_error_.clear();
+  try {
+    active_zones_ = zones_.empty() ? discover_thermal_zones(sysfs_path_) : zones_;
+  } catch (const std::exception & error) {
+    active_zones_.clear();
+    discovery_error_ = error.what();
+  }
 }
 
-void ThermalTask::cleanup() {}
+void ThermalTask::cleanup()
+{
+  active_zones_.clear();
+  discovery_error_.clear();
+}
 
 void ThermalTask::update(diagnostic_updater::DiagnosticStatusWrapper & status)
 {
@@ -102,15 +128,19 @@ void ThermalTask::update(diagnostic_updater::DiagnosticStatusWrapper & status)
   std::string message = "Thermal state OK";
 
   try {
-    const auto zones = zones_.empty() ? discover_thermal_zones(sysfs_path_) : zones_;
-    if (zones.empty()) {
+    if (!discovery_error_.empty()) {
+      throw std::runtime_error(discovery_error_);
+    }
+    if (active_zones_.empty()) {
       throw std::runtime_error("No thermal zones found in " + sysfs_path_);
     }
 
     status.add("sysfs_path", sysfs_path_);
+    status.add("zone_count", static_cast<int>(active_zones_.size()));
     double worst_temperature_c = std::numeric_limits<double>::lowest();
     std::string worst_zone_type;
-    for (const auto & zone : zones) {
+    for (const auto & zone : active_zones_) {
+      const auto zone_start = std::chrono::steady_clock::now();
       const auto zone_path = std::filesystem::path(sysfs_path_) / zone;
       if (!std::filesystem::exists(zone_path)) {
         throw std::runtime_error("Thermal zone does not exist: " + zone_path.string());
@@ -120,6 +150,9 @@ void ThermalTask::update(diagnostic_updater::DiagnosticStatusWrapper & status)
       const double temperature_c = static_cast<double>(read_long_file(zone_path / "temp")) / 1000.0;
       const auto label = zone + "." + zone_type;
       status.add(label + ".temperature_c", temperature_c);
+      status.add(
+        label + ".read_duration_ms",
+        format_ms(elapsed_ms(zone_start, std::chrono::steady_clock::now())));
 
       if (temperature_c > worst_temperature_c) {
         worst_temperature_c = temperature_c;

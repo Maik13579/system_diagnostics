@@ -27,6 +27,8 @@ public:
 private:
   std::string sysfs_path_ = "/sys/class/thermal";
   std::vector<std::string> zones_;
+  std::vector<std::string> active_zones_;
+  std::string discovery_error_;
   double warn_temperature_c_ = 75.0;
   double error_temperature_c_ = 90.0;
 };

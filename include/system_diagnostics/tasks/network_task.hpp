@@ -54,6 +54,7 @@ private:
   bool require_carrier_ = true;
   Thresholds thresholds_;
   std::map<std::string, Counters> previous_counters_;
+  std::uint64_t sample_count_ = 0;
 };
 
 }  // namespace system_diagnostics::tasks

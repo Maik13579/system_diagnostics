@@ -102,6 +102,21 @@ void make_network_interface(
   write_file(interface_path / "statistics" / "tx_dropped", std::to_string(tx_dropped) + "\n");
 }
 
+std::optional<std::string> diagnostic_value(
+  const diagnostic_updater::DiagnosticStatusWrapper & status,
+  const std::string & key)
+{
+  const auto value = std::find_if(
+    status.values.begin(), status.values.end(),
+    [&key](const diagnostic_msgs::msg::KeyValue & diagnostic_value) {
+      return diagnostic_value.key == key;
+    });
+  if (value == status.values.end()) {
+    return std::nullopt;
+  }
+  return value->value;
+}
+
 }  // namespace
 
 TEST(DiagnosticTaskHelpers, DeclareOrGetDeclaresMissingParameter)
@@ -398,6 +413,50 @@ TEST(NetworkTask, ReportsCounterDeltaThreshold)
 
   EXPECT_EQ(status.level, diagnostic_msgs::msg::DiagnosticStatus::ERROR);
   EXPECT_EQ(status.message, "eth_test rx_errors delta 12 exceeded error_rx_errors_delta 10");
+}
+
+TEST(NetworkTask, ReportsSampleCountEveryUpdate)
+{
+  TemporaryDirectory sysfs("system_diagnostics_network_sample_count_test");
+  make_network_interface(sysfs.path(), "eth_test", "1", "up", 0, 0, 0, 0);
+
+  auto node = make_node("network_sample_count_test", {
+    rclcpp::Parameter("network.sysfs_path", sysfs.path().string()),
+    rclcpp::Parameter("network.interfaces", std::vector<std::string>{"eth_test"}),
+  });
+  system_diagnostics::tasks::NetworkTask task;
+  task.configure(node, "network");
+
+  diagnostic_updater::DiagnosticStatusWrapper first_status;
+  task.update(first_status);
+  diagnostic_updater::DiagnosticStatusWrapper second_status;
+  task.update(second_status);
+
+  EXPECT_EQ(diagnostic_value(first_status, "sample_count"), "1");
+  EXPECT_EQ(diagnostic_value(second_status, "sample_count"), "2");
+  EXPECT_EQ(diagnostic_value(second_status, "interface_count"), "1");
+}
+
+TEST(NetworkTask, MissingInterfaceDoesNotSuppressAvailableInterfaceValues)
+{
+  TemporaryDirectory sysfs("system_diagnostics_network_partial_test");
+  make_network_interface(sysfs.path(), "eth_ok", "1", "up", 1, 2, 3, 4);
+
+  auto node = make_node("network_partial_test", {
+    rclcpp::Parameter("network.sysfs_path", sysfs.path().string()),
+    rclcpp::Parameter(
+      "network.interfaces", std::vector<std::string>{"missing", "eth_ok"}),
+  });
+  system_diagnostics::tasks::NetworkTask task;
+  task.configure(node, "network");
+
+  diagnostic_updater::DiagnosticStatusWrapper status;
+  task.update(status);
+
+  EXPECT_EQ(status.level, diagnostic_msgs::msg::DiagnosticStatus::ERROR);
+  EXPECT_EQ(diagnostic_value(status, "eth_ok.operstate"), "up");
+  EXPECT_EQ(diagnostic_value(status, "eth_ok.rx_errors"), "1");
+  ASSERT_TRUE(diagnostic_value(status, "missing.error").has_value());
 }
 
 TEST(BatteryTask, ReportsLowCapacityThreshold)

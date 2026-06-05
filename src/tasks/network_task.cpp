@@ -105,17 +105,21 @@ void NetworkTask::configure(
   thresholds_.error_tx_dropped_delta = declare_or_get<std::int64_t>(
     node, parameter_namespace + ".error_tx_dropped_delta", 10);
   previous_counters_.clear();
+  sample_count_ = 0;
 }
 
 void NetworkTask::cleanup()
 {
   previous_counters_.clear();
+  sample_count_ = 0;
 }
 
 void NetworkTask::update(diagnostic_updater::DiagnosticStatusWrapper & status)
 {
   int level = diagnostic_msgs::msg::DiagnosticStatus::OK;
   std::string message = "Network state OK";
+  ++sample_count_;
+  status.add("sample_count", sample_count_);
 
   try {
     if (interfaces_.empty()) {
@@ -123,58 +127,66 @@ void NetworkTask::update(diagnostic_updater::DiagnosticStatusWrapper & status)
     }
 
     status.add("sysfs_path", sysfs_path_);
+    status.add("interface_count", static_cast<int>(interfaces_.size()));
     for (const auto & interface : interfaces_) {
-      const auto interface_path = std::filesystem::path(sysfs_path_) / interface;
-      if (!std::filesystem::exists(interface_path)) {
-        throw std::runtime_error("Network interface does not exist: " + interface_path.string());
-      }
+      try {
+        const auto interface_path = std::filesystem::path(sysfs_path_) / interface;
+        if (!std::filesystem::exists(interface_path)) {
+          throw std::runtime_error(
+            "Network interface does not exist: " + interface_path.string());
+        }
 
-      const auto operstate = read_string_file(interface_path / "operstate");
-      const auto carrier = read_string_file(interface_path / "carrier");
-      const auto counters = read_counters(interface_path.string());
-      status.add(interface + ".operstate", operstate);
-      status.add(interface + ".carrier", carrier);
-      status.add(interface + ".rx_errors", counters.rx_errors);
-      status.add(interface + ".tx_errors", counters.tx_errors);
-      status.add(interface + ".rx_dropped", counters.rx_dropped);
-      status.add(interface + ".tx_dropped", counters.tx_dropped);
+        const auto operstate = read_string_file(interface_path / "operstate");
+        const auto carrier = read_string_file(interface_path / "carrier");
+        const auto counters = read_counters(interface_path.string());
+        status.add(interface + ".operstate", operstate);
+        status.add(interface + ".carrier", carrier);
+        status.add(interface + ".rx_errors", counters.rx_errors);
+        status.add(interface + ".tx_errors", counters.tx_errors);
+        status.add(interface + ".rx_dropped", counters.rx_dropped);
+        status.add(interface + ".tx_dropped", counters.tx_dropped);
 
-      if (require_carrier_ && carrier != "1") {
+        if (require_carrier_ && carrier != "1") {
+          level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+          message = interface + " carrier is down";
+        }
+
+        const auto previous = previous_counters_.find(interface);
+        if (previous != previous_counters_.end()) {
+          const auto rx_errors_delta = counter_delta(
+            counters.rx_errors, previous->second.rx_errors);
+          const auto tx_errors_delta = counter_delta(
+            counters.tx_errors, previous->second.tx_errors);
+          const auto rx_dropped_delta = counter_delta(
+            counters.rx_dropped, previous->second.rx_dropped);
+          const auto tx_dropped_delta = counter_delta(
+            counters.tx_dropped, previous->second.tx_dropped);
+
+          status.add(interface + ".rx_errors_delta", rx_errors_delta);
+          status.add(interface + ".tx_errors_delta", tx_errors_delta);
+          status.add(interface + ".rx_dropped_delta", rx_dropped_delta);
+          status.add(interface + ".tx_dropped_delta", tx_dropped_delta);
+
+          apply_counter_threshold(
+            interface, "rx_errors", rx_errors_delta,
+            thresholds_.warn_rx_errors_delta, thresholds_.error_rx_errors_delta, level, message);
+          apply_counter_threshold(
+            interface, "tx_errors", tx_errors_delta,
+            thresholds_.warn_tx_errors_delta, thresholds_.error_tx_errors_delta, level, message);
+          apply_counter_threshold(
+            interface, "rx_dropped", rx_dropped_delta,
+            thresholds_.warn_rx_dropped_delta, thresholds_.error_rx_dropped_delta, level, message);
+          apply_counter_threshold(
+            interface, "tx_dropped", tx_dropped_delta,
+            thresholds_.warn_tx_dropped_delta, thresholds_.error_tx_dropped_delta, level, message);
+        }
+
+        previous_counters_[interface] = counters;
+      } catch (const std::exception & error) {
+        status.add(interface + ".error", error.what());
         level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
-        message = interface + " carrier is down";
+        message = error.what();
       }
-
-      const auto previous = previous_counters_.find(interface);
-      if (previous != previous_counters_.end()) {
-        const auto rx_errors_delta = counter_delta(
-          counters.rx_errors, previous->second.rx_errors);
-        const auto tx_errors_delta = counter_delta(
-          counters.tx_errors, previous->second.tx_errors);
-        const auto rx_dropped_delta = counter_delta(
-          counters.rx_dropped, previous->second.rx_dropped);
-        const auto tx_dropped_delta = counter_delta(
-          counters.tx_dropped, previous->second.tx_dropped);
-
-        status.add(interface + ".rx_errors_delta", rx_errors_delta);
-        status.add(interface + ".tx_errors_delta", tx_errors_delta);
-        status.add(interface + ".rx_dropped_delta", rx_dropped_delta);
-        status.add(interface + ".tx_dropped_delta", tx_dropped_delta);
-
-        apply_counter_threshold(
-          interface, "rx_errors", rx_errors_delta,
-          thresholds_.warn_rx_errors_delta, thresholds_.error_rx_errors_delta, level, message);
-        apply_counter_threshold(
-          interface, "tx_errors", tx_errors_delta,
-          thresholds_.warn_tx_errors_delta, thresholds_.error_tx_errors_delta, level, message);
-        apply_counter_threshold(
-          interface, "rx_dropped", rx_dropped_delta,
-          thresholds_.warn_rx_dropped_delta, thresholds_.error_rx_dropped_delta, level, message);
-        apply_counter_threshold(
-          interface, "tx_dropped", tx_dropped_delta,
-          thresholds_.warn_tx_dropped_delta, thresholds_.error_tx_dropped_delta, level, message);
-      }
-
-      previous_counters_[interface] = counters;
     }
   } catch (const std::exception & error) {
     status.add("sysfs_path", sysfs_path_);

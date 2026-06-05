@@ -29,6 +29,7 @@ system_diagnostics:
       enabled: false
       name: "system_diagnostics/docker_memory"
       socket_path: "/var/run/docker.sock"
+      background: true
       warn_usage: 80.0
       error_usage: 90.0
       warn_usage_bytes: 0

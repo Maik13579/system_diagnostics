@@ -24,7 +24,7 @@ The package ships these task plugins:
 | --------- | ------ | ----------------------- | ---------- |
 | `cpu` | `system_diagnostics/CpuTask` | `system_diagnostics/cpu` | `enabled`, `name`, `warn_usage`, `error_usage`, `warn_load_per_core`, `error_load_per_core`, `proc_path` |
 | `memory` | `system_diagnostics/MemoryTask` | `system_diagnostics/memory` | `enabled`, `name`, `warn_usage`, `error_usage`, `warn_swap_usage`, `error_swap_usage`, `proc_path` |
-| `docker_memory` | `system_diagnostics/DockerMemoryTask` | `system_diagnostics/docker_memory` | `enabled`, `name`, `socket_path`, `warn_usage`, `error_usage`, `warn_usage_bytes`, `error_usage_bytes` |
+| `docker_memory` | `system_diagnostics/DockerMemoryTask` | `system_diagnostics/docker_memory` | `enabled`, `name`, `socket_path`, `background`, `warn_usage`, `error_usage`, `warn_usage_bytes`, `error_usage_bytes` |
 | `storage` | `system_diagnostics/StorageTask` | `system_diagnostics/storage` | `enabled`, `name`, `paths`, `warn_usage`, `error_usage`, `check_writable` |
 | `thermal` | `system_diagnostics/ThermalTask` | `system_diagnostics/thermal` | `enabled`, `name`, `sysfs_path`, `zones`, `warn_temperature_c`, `error_temperature_c` |
 | `network` | `system_diagnostics/NetworkTask` | `system_diagnostics/network` | `enabled`, `name`, `sysfs_path`, `interfaces`, `require_carrier`, RX/TX error and drop delta thresholds |
@@ -39,6 +39,10 @@ all running containers and emits a direct diagnostic key-value for each one, for
 `nav: 178.8 MiB`, plus detailed `container.<name>.*` values. Omit `thermal.zones` to discover all
 `thermal_zone*` entries under `thermal.sysfs_path`; set it only when selecting
 specific zones.
+
+`docker_memory.background` defaults to `true`, so Docker API calls run in a
+background worker and the task publishes the most recent completed sample instead
+of blocking the whole diagnostics cycle.
 
 The node loads task namespaces that declare a `plugin` parameter. Set
 `tasks` to the namespace list to load, and set `<namespace>.enabled: false` to

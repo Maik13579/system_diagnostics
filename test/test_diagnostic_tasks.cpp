@@ -21,10 +21,13 @@
 
 #include <chrono>
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace
@@ -267,6 +270,7 @@ TEST(MemoryTask, ReportsExceededMemoryThreshold)
 TEST(DockerMemoryTask, ReportsWorstContainerOverThreshold)
 {
   auto node = make_node("docker_memory_threshold_test", {
+    rclcpp::Parameter("docker_memory.background", false),
     rclcpp::Parameter("docker_memory.error_usage", 90.0),
   });
   system_diagnostics::tasks::DockerMemoryTask task;
@@ -297,7 +301,9 @@ TEST(DockerMemoryTask, ReportsWorstContainerOverThreshold)
 
 TEST(DockerMemoryTask, ReportsSocketError)
 {
-  auto node = make_node("docker_memory_socket_error_test");
+  auto node = make_node("docker_memory_socket_error_test", {
+    rclcpp::Parameter("docker_memory.background", false),
+  });
   system_diagnostics::tasks::DockerMemoryTask task;
   task.configure(node, "docker_memory");
   task.set_sampler([]() {
@@ -312,6 +318,77 @@ TEST(DockerMemoryTask, ReportsSocketError)
 
   EXPECT_EQ(status.level, diagnostic_msgs::msg::DiagnosticStatus::ERROR);
   EXPECT_EQ(status.message, "connect failed for /var/run/docker.sock: No such file or directory");
+}
+
+TEST(DockerMemoryTask, BackgroundSamplingDoesNotBlockUpdate)
+{
+  auto node = make_node("docker_memory_background_test");
+  system_diagnostics::tasks::DockerMemoryTask task;
+  task.configure(node, "docker_memory");
+
+  std::promise<void> sampler_started;
+  std::promise<void> sampler_finished;
+  std::promise<void> release_sampler;
+  auto first_sample_started = std::make_shared<std::atomic_bool>(false);
+  auto sampler_started_future = sampler_started.get_future();
+  auto sampler_finished_future = sampler_finished.get_future();
+  auto release_future = release_sampler.get_future().share();
+  task.set_sampler(
+    [release_future, &sampler_started, &sampler_finished, first_sample_started]() mutable {
+      if (!first_sample_started->exchange(true)) {
+        sampler_started.set_value();
+      }
+      release_future.wait();
+      system_diagnostics::tasks::DockerMemoryTask::Sample sample;
+      sample.success = true;
+      sample.containers = {
+        {"abc123", "nav", 500, 1000},
+      };
+      if (first_sample_started->load()) {
+        try {
+          sampler_finished.set_value();
+        } catch (const std::future_error &) {
+        }
+      }
+      return sample;
+    });
+
+  diagnostic_updater::DiagnosticStatusWrapper pending_status;
+  const auto update_start = std::chrono::steady_clock::now();
+  task.update(pending_status);
+  const auto update_duration = std::chrono::steady_clock::now() - update_start;
+
+  ASSERT_EQ(
+    sampler_started_future.wait_for(1s),
+    std::future_status::ready);
+  EXPECT_LT(update_duration, 100ms);
+  EXPECT_EQ(pending_status.level, diagnostic_msgs::msg::DiagnosticStatus::ERROR);
+  EXPECT_EQ(pending_status.message, "Docker memory sample pending");
+  EXPECT_EQ(diagnostic_value(pending_status, "background"), "true");
+  EXPECT_EQ(diagnostic_value(pending_status, "sample_in_progress"), "true");
+
+  release_sampler.set_value();
+  ASSERT_EQ(
+    sampler_finished_future.wait_for(2s),
+    std::future_status::ready);
+
+  const auto deadline = std::chrono::steady_clock::now() + 1s;
+  diagnostic_updater::DiagnosticStatusWrapper ready_status;
+  while (std::chrono::steady_clock::now() < deadline) {
+    task.update(ready_status);
+    if (diagnostic_value(ready_status, "sample_sequence") == "1") {
+      break;
+    }
+    std::this_thread::sleep_for(10ms);
+  }
+
+  EXPECT_EQ(ready_status.level, diagnostic_msgs::msg::DiagnosticStatus::OK);
+  EXPECT_EQ(ready_status.message, "Docker container memory usage OK");
+  EXPECT_EQ(diagnostic_value(ready_status, "container_count"), "1");
+  EXPECT_EQ(diagnostic_value(ready_status, "sample_sequence"), "1");
+  EXPECT_TRUE(diagnostic_value(ready_status, "sample_age_ms").has_value());
+
+  task.cleanup();
 }
 
 TEST(StorageTask, ReportsExceededUsageThreshold)

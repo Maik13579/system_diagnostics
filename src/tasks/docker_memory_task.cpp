@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cerrno>
 #include <cstring>
 #include <iomanip>
@@ -224,6 +225,20 @@ double usage_percent(const system_diagnostics::tasks::DockerMemoryTask::Containe
   return static_cast<double>(container.usage_bytes) / static_cast<double>(container.limit_bytes) * 100.0;
 }
 
+double elapsed_ms(
+  const std::chrono::steady_clock::time_point & start,
+  const std::chrono::steady_clock::time_point & stop)
+{
+  return std::chrono::duration<double, std::milli>(stop - start).count();
+}
+
+std::string format_ms(double value)
+{
+  std::ostringstream stream;
+  stream << std::fixed << std::setprecision(3) << value;
+  return stream.str();
+}
+
 }  // namespace
 
 namespace system_diagnostics::tasks
@@ -242,14 +257,23 @@ void DockerMemoryTask::configure(
     declare_or_get(node, parameter_namespace + ".warn_usage_bytes", 0));
   error_usage_bytes_ = static_cast<std::uint64_t>(
     declare_or_get(node, parameter_namespace + ".error_usage_bytes", 0));
+  background_ = declare_or_get(node, parameter_namespace + ".background", true);
   sampler_ = [this]() {return sample_docker();};
 }
 
-void DockerMemoryTask::cleanup() {}
+void DockerMemoryTask::cleanup()
+{
+  join_background_worker();
+  std::lock_guard<std::mutex> lock(sample_mutex_);
+  latest_sample_.reset();
+  latest_sample_duration_ms_ = 0.0;
+  sample_sequence_ = 0;
+  sample_in_progress_ = false;
+}
 
 void DockerMemoryTask::update(diagnostic_updater::DiagnosticStatusWrapper & status)
 {
-  const auto sample = sampler_();
+  const auto sample = current_sample(status);
   status.add("socket_path", socket_path_);
   status.add("container_count", static_cast<int>(sample.containers.size()));
 
@@ -308,7 +332,81 @@ void DockerMemoryTask::update(diagnostic_updater::DiagnosticStatusWrapper & stat
 
 void DockerMemoryTask::set_sampler(Sampler sampler)
 {
+  join_background_worker();
   sampler_ = std::move(sampler);
+}
+
+DockerMemoryTask::Sample DockerMemoryTask::current_sample(
+  diagnostic_updater::DiagnosticStatusWrapper & status)
+{
+  if (!background_) {
+    const auto sample_start = std::chrono::steady_clock::now();
+    auto sample = sampler_();
+    status.add("background", "false");
+    status.add(
+      "sample_duration_ms",
+      format_ms(elapsed_ms(sample_start, std::chrono::steady_clock::now())));
+    return sample;
+  }
+
+  start_background_sample_if_idle();
+
+  std::lock_guard<std::mutex> lock(sample_mutex_);
+  status.add("background", "true");
+  status.add("sample_in_progress", sample_in_progress_ ? "true" : "false");
+  status.add("sample_sequence", sample_sequence_);
+  status.add("sample_duration_ms", format_ms(latest_sample_duration_ms_));
+  if (!latest_sample_) {
+    Sample pending_sample;
+    pending_sample.success = false;
+    pending_sample.error = "Docker memory sample pending";
+    return pending_sample;
+  }
+  status.add(
+    "sample_age_ms",
+    format_ms(elapsed_ms(latest_sample_time_, std::chrono::steady_clock::now())));
+  return *latest_sample_;
+}
+
+void DockerMemoryTask::start_background_sample_if_idle()
+{
+  {
+    std::lock_guard<std::mutex> lock(sample_mutex_);
+    if (sample_in_progress_) {
+      return;
+    }
+  }
+
+  if (sample_worker_.joinable()) {
+    sample_worker_.join();
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(sample_mutex_);
+    if (sample_in_progress_) {
+      return;
+    }
+    sample_in_progress_ = true;
+  }
+
+  sample_worker_ = std::thread([this]() {
+      const auto sample_start = std::chrono::steady_clock::now();
+      auto sample = sampler_();
+      const auto sample_stop = std::chrono::steady_clock::now();
+      std::lock_guard<std::mutex> lock(sample_mutex_);
+      latest_sample_ = std::move(sample);
+      latest_sample_time_ = sample_stop;
+      latest_sample_duration_ms_ = elapsed_ms(sample_start, sample_stop);
+      ++sample_sequence_;
+      sample_in_progress_ = false;
+    });
+}
+
+void DockerMemoryTask::join_background_worker()
+{
+  if (sample_worker_.joinable()) {
+    sample_worker_.join();
+  }
 }
 
 DockerMemoryTask::Sample DockerMemoryTask::sample_docker() const
